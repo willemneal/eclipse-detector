@@ -1,40 +1,31 @@
 //! Port of https://github.com/opencv/opencv/blob/4.7.0/samples/cpp/tutorial_code/ImgTrans/HoughCircle_Demo.cpp
 
+use rayon::prelude::*;
 use std::env::args;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 
-use opencv::core::{find_file, Point, Point2i, Size2i, BORDER_DEFAULT};
-use opencv::highgui::{create_trackbar, imshow, named_window, wait_key, WINDOW_AUTOSIZE};
-use opencv::imgcodecs::{imread, IMREAD_COLOR};
+use opencv::core::{find_file, Size2i, BORDER_DEFAULT};
+use opencv::imgcodecs::{imread, imwrite, IMREAD_COLOR};
 use opencv::imgproc::{
-    circle, cvt_color_def, gaussian_blur, hough_circles, COLOR_BGR2GRAY, HOUGH_GRADIENT,
+    cvt_color_def, gaussian_blur, hough_circles, COLOR_BGR2GRAY, HOUGH_GRADIENT,
 };
 use opencv::prelude::*;
 use opencv::types::VectorOfVec3f;
 use opencv::Result;
 
-opencv::opencv_branch_4! {
-     use opencv::imgproc::LINE_8;
-}
 opencv::not_opencv_branch_4! {
      use opencv::core::LINE_8;
 }
-
-// Windows and trackbars names
-const WINDOW_NAME: &str = "Hough Circle Detection Demo";
-const CANNY_THRESHOLD_TRACKBAR_NAME: &str = "Canny Threshold";
-const ACCUMULATOR_THRESHOLD_TRACKBAR_NAME: &str = "Accumulator Threshold";
-
 // Initial and max values of the parameters of interest
-const CANNY_THRESHOLD_INIT_VAL: i32 = 100;
-const ACCUMULATOR_THRESHOLD_INIT_VAL: i32 = 50;
-const MAX_CANNY_THRESHOLD: i32 = 255;
-const MAX_ACCUMULATOR_THRESHOLD: i32 = 200;
+const CANNY_THRESHOLD_INIT_VAL: i32 = 10;
+const ACCUMULATOR_THRESHOLD_INIT_VAL: i32 = 10;
 
 fn find_cicle(
     src_gray: &Mat,
-    src_display: &Mat,
+    _src_display: &Mat,
     canny_threshold: i32,
     accumulator_threshold: i32,
 ) -> Result<VectorOfVec3f> {
@@ -53,71 +44,41 @@ fn find_cicle(
         0,
         0,
     )?;
-    println!("Circles: {:#?}", circles);
     Ok(circles)
-}
-
-fn hough_detection(
-    src_gray: &Mat,
-    src_display: &Mat,
-    canny_threshold: i32,
-    accumulator_threshold: i32,
-) -> Result<()> {
-    let circles = find_cicle(
-        src_gray,
-        src_display,
-        canny_threshold,
-        accumulator_threshold,
-    )?;
-
-    // Clone the color input image for display purposes
-    let mut display: Mat = src_display.clone();
-
-    // Show the result
-    for c in circles {
-        let center: Point2i = Point::new(c[0].round() as i32, c[1].round() as i32);
-        let radius: i32 = c[2].round() as i32;
-
-        // Circle center
-        circle(
-            &mut display,
-            center,
-            3,
-            (0.0, 255.0, 0.0).into(),
-            -1,
-            LINE_8,
-            0,
-        )?;
-
-        // Circle outline
-        circle(
-            &mut display,
-            center,
-            radius,
-            (0.0, 0.0, 255.0).into(),
-            3,
-            LINE_8,
-            0,
-        )?;
-    }
-
-    // Show the results
-    imshow(WINDOW_NAME, &display)?;
-    Ok(())
 }
 
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
-    if args.len() != 2 {
-        println!("Usage: {} <file> <output>", args[0]);
+    if args.len() != 3 {
+        println!("Usage: {} <input_dir> <output_dir>", args[0]);
         std::process::exit(2);
     }
-    let image_name = &args[1];
-    read_image(image_name)
+    let input_dir = PathBuf::from(&args[1]);
+    let out_dir = PathBuf::from(&args[2]);
+    fs::read_dir(input_dir)
+        .unwrap()
+        .map(|p| p.unwrap().path())
+        .collect::<Vec<_>>()
+        .par_iter()
+        .for_each(|p| {
+            let out_name = out_dir.join(p.file_name().unwrap());
+
+            if out_name.exists() {
+                return;
+            }
+            if let Err(e) = read_image(p, &out_name) {
+                eprintln!("failed to process image:{:?}\n{e}", p.file_name().unwrap());
+            }
+        });
+    Ok(())
+    // read_image(&image_path, &out_dir)
 }
 
-fn read_image(img_name: &str) -> Result<()> {
-    let src = imread(&find_file(&img_name, true, false)?, IMREAD_COLOR)?;
+fn read_image(img_name: &Path, out_name: &Path) -> Result<()> {
+    let src = imread(
+        &find_file(&img_name.to_string_lossy(), true, false)?,
+        IMREAD_COLOR,
+    )?;
     if src.empty() {
         eprintln!("Invalid input image");
         println!(
@@ -147,52 +108,70 @@ fn read_image(img_name: &str) -> Result<()> {
     let accumulator_threshold: Arc<AtomicI32> =
         Arc::new(AtomicI32::new(ACCUMULATOR_THRESHOLD_INIT_VAL));
 
-    // Create the main window, and attach the trackbars
-    named_window(WINDOW_NAME, WINDOW_AUTOSIZE)?;
+    // // Create the main window, and attach the trackbars
+    // named_window(WINDOW_NAME, WINDOW_AUTOSIZE)?;
 
-    create_trackbar(
-        CANNY_THRESHOLD_TRACKBAR_NAME,
-        WINDOW_NAME,
-        None,
-        MAX_CANNY_THRESHOLD,
-        Some(Box::new({
-            let canny_threshold = canny_threshold.clone();
-            move |val| {
-                canny_threshold.as_ref().store(val, Ordering::SeqCst);
-            }
-        })),
-    )?;
+    // create_trackbar(
+    //     CANNY_THRESHOLD_TRACKBAR_NAME,
+    //     WINDOW_NAME,
+    //     None,
+    //     MAX_CANNY_THRESHOLD,
+    //     Some(Box::new({
+    //         let canny_threshold = canny_threshold.clone();
+    //         move |val| {
+    //             canny_threshold.as_ref().store(val, Ordering::SeqCst);
+    //         }
+    //     })),
+    // )?;
 
-    create_trackbar(
-        ACCUMULATOR_THRESHOLD_TRACKBAR_NAME,
-        WINDOW_NAME,
-        None,
-        MAX_ACCUMULATOR_THRESHOLD,
-        Some(Box::new({
-            let accumulator_threshold = accumulator_threshold.clone();
-            move |val| {
-                accumulator_threshold.as_ref().store(val, Ordering::SeqCst);
-            }
-        })),
-    )?;
+    // create_trackbar(
+    //     ACCUMULATOR_THRESHOLD_TRACKBAR_NAME,
+    //     WINDOW_NAME,
+    //     None,
+    //     MAX_ACCUMULATOR_THRESHOLD,
+    //     Some(Box::new({
+    //         let accumulator_threshold = accumulator_threshold.clone();
+    //         move |val| {
+    //             accumulator_threshold.as_ref().store(val, Ordering::SeqCst);
+    //         }
+    //     })),
+    // )?;
 
     // Infinite loop to display
     // and refresh the content of the output image
     // until the user presses q or Q
     // let mut key: char = ' ';
     // while key.to_ascii_lowercase() != 'q' {
-        // Those parameters cannot be = 0, so we must check here
-        let canny_threshold_val = canny_threshold.fetch_max(1, Ordering::SeqCst);
-        let accumulator_threshold_val = accumulator_threshold.fetch_max(1, Ordering::SeqCst);
+    // Those parameters cannot be = 0, so we must check here
+    let canny_threshold_val = canny_threshold.fetch_max(1, Ordering::SeqCst);
+    let accumulator_threshold_val = accumulator_threshold.fetch_max(1, Ordering::SeqCst);
 
-        // Runs the detection, and update the display
-        find_cicle(
-            &src_gray_blur,
-            &src,
-            canny_threshold_val,
-            accumulator_threshold_val,
-        )?;
-
+    // Runs the detection, and update the display
+    let cirlce = find_cicle(
+        &src_gray_blur,
+        &src,
+        canny_threshold_val,
+        accumulator_threshold_val,
+    )?
+    .get(0)
+    .expect("no circle found");
+    let (x, y, r) = (cirlce[0], cirlce[1], cirlce[2]);
+    let xmin = (x - r * 2.0) as i32;
+    let ymin = (y - r * 2.0) as i32;
+    let height = 1000;
+    let width = 1000;
+    let cropped_image = Mat::roi(
+        &src,
+        opencv::core::Rect {
+            x: xmin,
+            y: ymin,
+            width,
+            height,
+        },
+    )
+    .unwrap();
+    let params = opencv::types::VectorOfi32::new();
+    imwrite(&out_name.to_string_lossy(), &cropped_image, &params).expect("faield to write image");
     //     // Get user key
     //     key = wait_key(10).unwrap() as u8 as char;
     // }

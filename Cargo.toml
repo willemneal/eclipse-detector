@@ -2,6 +2,14 @@
 name = "eclipse-detector"
 version = "0.1.0"
 edition = "2021"
+default-run = "eclipse-detector"
+
+[[bin]]
+name = "average"
+path = "src/average.rs"
+
+# [[bin]]
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,3 +19,6 @@ image = "0.24"
 imageproc = "0.24.0"
 opencv = "0.89.0"
 rawloader = "0.37.1"
+rayon = "1.10.0"
+
+polars = { version = "0.26.1", features = ["lazy", "temporal", "describe", "json", "parquet", "dtype-datetime"] }
